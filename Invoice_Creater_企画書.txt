@@ -1,0 +1,529 @@
+````markdown
+# Flutter精算書アプリ 詳細設計書
+
+## 0. 実装AIへの前提指示
+
+あなたは Flutter エンジニアとして、以下の仕様に基づきアプリを実装してください。
+Flutterで作成し、Dart言語を用いてください。
+また、githubを用いて開発を行ってください。
+
+### 0.1 重要方針（必ず守ること）
+
+- **後から新機能を追加しやすく、バグ修正もしやすい設計にすること。**  
+  具体的には：
+  - 画面(UI)・状態管理・永続化(DB)・PDF生成の責務を**明確に分離**する
+  - ビジネスロジックはできる限り Widget 内に書かず、**Provider / Controller 層に集約**する
+  - 再利用可能な処理はヘルパー関数やクラスとして切り出し、**コピペを避ける**
+  - クラス・メソッド・ファイル名は**一貫した命名規則**を守る
+  - 仕様変更に強いように、マジックナンバー・ベタ書き文字列を極力避け、定数・設定クラスにまとめる
+
+- プラットフォームは主に Android を想定（iOS 対応可能なら尚良いが必須ではない）。
+
+---
+
+## 1. アプリ概要
+
+### 1.1 目的
+
+- 日々の支払い情報（支払日・支払い先・用途・決済手段・金額）をアプリに入力し、
+- A4 縦の「精算書 PDF」をワンタップで生成・共有できるようにする。
+
+### 1.2 想定ユーザー
+
+- 学校の生徒会 / 部活動などで立替精算の書類をよく作成する人
+- 月次の精算書を頻繁に作る人
+
+### 1.3 対応プラットフォーム / 技術
+
+- フレームワーク：Flutter（Stable）
+- 最低対応 OS：Android 9 以上を想定
+
+---
+
+## 2. 使用パッケージ（推奨）
+
+`pubspec.yaml` に以下のパッケージを追加してください（バージョンは最新安定版で可）。
+
+- 状態管理  
+  - `flutter_riverpod`
+- ローカルDB  
+  - `hive`
+  - `hive_flutter`
+  - `path_provider`
+- PDF生成  
+  - `pdf`
+  - `printing`
+- ユーティリティ  
+  - `intl`（日付・通貨フォーマット用）
+
+`freezed`, `json_serializable` 等のコード生成ツールの利用は任意。  
+ただし、保守性の観点から、**モデルクラスの変更に強い構造**が望ましい。
+
+---
+
+## 3. 画面一覧 & ルーティング
+
+### 3.1 画面一覧
+
+1. `ExpenseSheetListScreen`  
+   - 精算書一覧（ホーム画面）
+2. `ExpenseSheetEditScreen`  
+   - 1枚の精算書の編集画面
+3. `ExpenseItemEditBottomSheet`（または `Dialog`）  
+   - 明細1行の入力・編集 UI
+4. `ExpensePdfPreviewScreen`  
+   - PDFプレビュー & 共有画面
+5. `SettingsScreen`（v1で余裕があれば）  
+   - デフォルト申請者名・決済手段の設定
+
+### 3.2 ルーティング仕様
+
+ルーティング方法（Navigator / GoRouter）は任意だが、以下のパス・意味を守ること：
+
+| 画面                    | Route path 例                  |
+|-------------------------|--------------------------------|
+| ExpenseSheetListScreen  | `/`                            |
+| ExpenseSheetEditScreen  | `/sheet/:sheetId`              |
+| ExpensePdfPreviewScreen | `/sheet/:sheetId/pdf_preview`  |
+| SettingsScreen (任意)   | `/settings`                    |
+
+- 新規作成時は `sheetId = "new"` など仮IDで遷移し、保存時に UUID を発行して永続化する。
+
+---
+
+## 4. データモデル設計
+
+### 4.1 ExpenseSheet（精算書）
+
+```dart
+class ExpenseSheet {
+  final String id;             // UUID文字列
+  final String title;          // 例: "11月度 生徒会精算書"
+  final String applicantName;  // 申請者名
+  final DateTime createdAt;    // 精算書作成日
+  final List<ExpenseItem> items;
+
+  ExpenseSheet({
+    required this.id,
+    required this.title,
+    required this.applicantName,
+    required this.createdAt,
+    required this.items,
+  });
+
+  int get totalAmount => items.fold(0, (sum, item) => sum + item.amount);
+
+  ExpenseSheet copyWith({
+    String? id,
+    String? title,
+    String? applicantName,
+    DateTime? createdAt,
+    List<ExpenseItem>? items,
+  }) {
+    return ExpenseSheet(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      applicantName: applicantName ?? this.applicantName,
+      createdAt: createdAt ?? this.createdAt,
+      items: items ?? this.items,
+    );
+  }
+}
+````
+
+> `copyWith` を用意しておくことで、将来的なフィールド追加・更新処理の保守性を高める。
+
+### 4.2 ExpenseItem（明細1行）
+
+```dart
+class ExpenseItem {
+  final String id;             // 行識別用 UUID
+  final DateTime date;         // 支払日
+  final String payee;          // 支払い先
+  final String purpose;        // 目的・用途
+  final String paymentMethod;  // 決済手段 (例: "Suica", "d払い", "現金")
+  final int amount;            // 金額（円）
+  final String? note;          // 備考（オプション）
+
+  ExpenseItem({
+    required this.id,
+    required this.date,
+    required this.payee,
+    required this.purpose,
+    required this.paymentMethod,
+    required this.amount,
+    this.note,
+  });
+
+  ExpenseItem copyWith({
+    String? id,
+    DateTime? date,
+    String? payee,
+    String? purpose,
+    String? paymentMethod,
+    int? amount,
+    String? note,
+  }) {
+    return ExpenseItem(
+      id: id ?? this.id,
+      date: date ?? this.date,
+      payee: payee ?? this.payee,
+      purpose: purpose ?? this.purpose,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      amount: amount ?? this.amount,
+      note: note ?? this.note,
+    );
+  }
+}
+```
+
+### 4.3 AppSettings（アプリ設定）
+
+```dart
+class AppSettings {
+  final String defaultApplicantName;
+  final List<String> paymentMethodCandidates; // ["現金", "Suica", "d払い", ... ]
+
+  AppSettings({
+    required this.defaultApplicantName,
+    required this.paymentMethodCandidates,
+  });
+
+  AppSettings copyWith({
+    String? defaultApplicantName,
+    List<String>? paymentMethodCandidates,
+  }) {
+    return AppSettings(
+      defaultApplicantName:
+          defaultApplicantName ?? this.defaultApplicantName,
+      paymentMethodCandidates:
+          paymentMethodCandidates ?? this.paymentMethodCandidates,
+    );
+  }
+
+  factory AppSettings.initial() {
+    return AppSettings(
+      defaultApplicantName: '',
+      paymentMethodCandidates: ['現金', 'Suica', 'd払い'],
+    );
+  }
+}
+```
+
+---
+
+## 5. 永続化設計（Hive）
+
+### 5.1 Box 構成
+
+* Box 名：`expense_sheets`
+
+  * key: `String`（sheet.id）
+  * value: `ExpenseSheet`（TypeAdapter を実装）
+* Box 名：`app_settings`
+
+  * key: `"settings"`
+  * value: `AppSettings`（TypeAdapter を実装）
+
+### 5.2 保守性を考慮したポイント
+
+* モデルのバージョンアップに備え、TypeAdapter の `typeId` は固定し、変更しないこと。
+* フィールド追加があり得るため、**デフォルト値に耐えられる実装**（nullable + デフォルト適用）を心がけること。
+
+---
+
+## 6. 状態管理（Riverpod）
+
+### 6.1 プロバイダ一覧
+
+1. `expenseSheetListProvider`
+
+   * 型：`AsyncNotifier<List<ExpenseSheet>>` 相当
+   * 役割：全精算書一覧の取得・更新
+
+2. `expenseSheetProvider(String sheetId)`
+
+   * 型：`AsyncNotifier<ExpenseSheet?>`
+   * 役割：指定IDの精算書の取得・編集
+
+3. `appSettingsProvider`
+
+   * 型：`Notifier<AppSettings>`
+   * 役割：設定値の取得・更新
+
+※ それぞれの Provider は「UI から触る窓口」とし、
+Hive とのやりとりは専用の DataSource クラスに委譲すること（後述）。
+
+### 6.2 DataSource 層の例
+
+`data/datasources/hive_expense_sheet_datasource.dart` などを定義し、
+Hive 直接アクセスをそこに閉じ込めること。
+
+```dart
+class HiveExpenseSheetDataSource {
+  final Box<ExpenseSheet> box;
+
+  HiveExpenseSheetDataSource(this.box);
+
+  Future<List<ExpenseSheet>> getAll() async { /* ... */ }
+  Future<ExpenseSheet?> getById(String id) async { /* ... */ }
+  Future<void> save(ExpenseSheet sheet) async { /* ... */ }
+  Future<void> delete(String id) async { /* ... */ }
+}
+```
+
+> こうすることで、将来 Hive から別のDBへ変更したいときも、UI や Provider には影響が少なくなる。
+
+---
+
+## 7. 画面仕様 詳細
+
+### 7.1 ExpenseSheetListScreen（ホーム）
+
+**表示内容**
+
+* AppBar タイトル：`精算書一覧`
+* ボディ：`ListView` で各精算書カード
+
+  * タイトル
+  * 作成日（`yyyy/MM/dd`）
+  * 合計金額（`#,### 円`）
+* 右下：`FloatingActionButton`（＋アイコン）
+
+  * タップで新規精算書作成フローへ
+
+**操作**
+
+* カードタップ：
+
+  * `ExpenseSheetEditScreen` へ遷移
+* FABタップ：
+
+  * 仮 `ExpenseSheet` を生成して編集画面へ
+  * `title: "未命名の精算書"`, `createdAt: DateTime.now()`, `items: []`
+  * 保存時に `id` を発行 & 永続化
+
+---
+
+### 7.2 ExpenseSheetEditScreen
+
+**AppBar**
+
+* タイトル：`精算書編集`
+* 右側アイコン：
+
+  * PDFアイコン → `ExpensePdfPreviewScreen` へ遷移
+
+**ヘッダー**
+
+* TextField：精算書タイトル
+* TextField：申請者名
+
+  * 空の場合、`appSettings.defaultApplicantName` をプレースホルダー等に利用
+* 作成日：
+
+  * `TextButton` + `showDatePicker`
+
+**明細一覧**
+
+* `ListView.builder`
+* 1行の表示：
+
+  * 左：支払日（`MM/dd`）
+  * 中央：支払い先（1行目） + 用途（2行目, 小さめ文字）
+  * 右：金額（`#,### 円`）
+* 行タップ or 編集アイコンタップ → `ExpenseItemEditBottomSheet` 表示
+* スワイプ削除（Dismissible）実装しても良い
+
+**下部**
+
+* 合計金額（大きめ表示）
+* `ElevatedButton`：`明細を追加`
+
+---
+
+### 7.3 ExpenseItemEditBottomSheet
+
+**入力項目**
+
+1. 支払日
+
+   * `TextButton` + `showDatePicker`
+2. 支払い先
+
+   * `TextFormField`
+3. 目的・用途
+
+   * `TextFormField`
+4. 決済手段
+
+   * `DropdownButtonFormField<String>`
+   * 選択肢は `appSettings.paymentMethodCandidates`
+5. 金額
+
+   * `TextFormField`
+   * `TextInputType.number`
+   * バリデーション：0より大きい整数
+6. 備考（任意）
+
+**ボタン**
+
+* 下部に「キャンセル」「保存」
+* 新規時：保存 → `addItem`
+* 編集時：保存 → `updateItem`
+
+---
+
+### 7.4 ExpensePdfPreviewScreen
+
+* `printing` の `PdfPreview` を使用
+
+```dart
+class ExpensePdfPreviewScreen extends StatelessWidget {
+  final ExpenseSheet sheet;
+
+  const ExpensePdfPreviewScreen({super.key, required this.sheet});
+
+  @override
+  Widget build(BuildContext context) {
+    return PdfPreview(
+      build: (format) => buildExpenseSheetPdf(format, sheet),
+    );
+  }
+}
+```
+
+---
+
+## 8. PDFレイアウト仕様
+
+`pdf` パッケージを使用し、`Uint8List` を返す関数を実装すること。
+
+```dart
+Future<Uint8List> buildExpenseSheetPdf(
+  PdfPageFormat format,
+  ExpenseSheet sheet,
+)
+```
+
+### 8.1 ページ設定
+
+* 用紙：A4 縦
+* マージン：上下左右 20〜25 mm 程度
+
+### 8.2 レイアウト構成
+
+1. ヘッダー
+
+   * タイトル：`精算書`（20〜24pt、太字、中央寄せ）
+   * 右上：`作成日: yyyy/MM/dd`
+   * 左上：`申請者: {sheet.applicantName}`
+
+2. 明細テーブル
+
+* 列：
+
+| 列名    | 内容                   |
+| ----- | -------------------- |
+| 支払日   | `yyyy/MM/dd`         |
+| 支払い先  | `payee`              |
+| 目的・用途 | `purpose`            |
+| 決済手段  | `paymentMethod`      |
+| 金額    | `#,###`（必要なら末尾に "円"） |
+
+* `pw.Table.fromTextArray` で実装
+* ヘッダ行は太字、セルは左寄せ
+
+3. 合計欄
+
+* テーブル下に右寄せ：
+
+  * `合計: {sheet.totalAmount} 円`
+  * 太字・やや大きめフォント
+
+4. 改ページ
+
+* 明細行が多い場合は自動で2ページ目以降に続く。
+* 2ページ目以降のヘッダー簡略表示（タイトル＋ページ番号）をつけてもよい（任意）。
+
+---
+
+## 9. バリデーション・制約
+
+* 明細の必須項目：支払日 / 支払い先 / 目的・用途 / 決済手段 / 金額
+* 金額は 0 より大きい整数
+* 日付は `DateTime` で保持し、`intl` を使ってフォーマット
+* PDF出力時、明細0件なら警告ダイアログを出してキャンセルしてもよい
+
+---
+
+## 10. ディレクトリ構成と責務分離
+
+### 10.1 ディレクトリ構成例
+
+```text
+lib/
+  main.dart
+  core/
+    utils/
+    theme/
+  data/
+    models/
+      expense_sheet.dart
+      expense_item.dart
+      app_settings.dart
+    datasources/
+      hive_expense_sheet_datasource.dart
+      hive_app_settings_datasource.dart
+  application/
+    providers/
+      expense_sheet_list_provider.dart
+      expense_sheet_provider.dart
+      app_settings_provider.dart
+  presentation/
+    screens/
+      expense_sheet_list_screen.dart
+      expense_sheet_edit_screen.dart
+      expense_pdf_preview_screen.dart
+      settings_screen.dart
+    widgets/
+      expense_item_tile.dart
+      expense_item_edit_bottom_sheet.dart
+  pdf/
+    expense_sheet_pdf_builder.dart
+```
+
+### 10.2 責務の分離方針（拡張性・保守性のため）
+
+* **presentation/**
+
+  * Flutter Widget だけを置く
+  * できるだけ「見た目＋イベント発行」に集中し、ビジネスロジックは Provider に任せる
+* **application/**
+
+  * Provider / Controller 層
+  * UI から呼ばれるメソッドをまとめ、状態遷移のロジックを担う
+* **data/**
+
+  * モデル & DB アクセス
+  * Hive への read/write は DataSource 経由にし、Provider から直接 Hive を触らない
+* **pdf/**
+
+  * PDF生成ロジックをまとめる
+  * UI層は「`buildExpenseSheetPdf` を呼ぶだけ」とし、レイアウトの変更はこのフォルダ内で完結できるようにする。
+
+---
+
+## 11. 完成条件（Doneの定義）
+
+1. アプリ起動時に精算書一覧が表示される
+2. 新規精算書の作成ができる
+3. 精算書に明細行を追加・編集・削除できる
+4. 合計金額が自動で更新される
+5. PDF プレビュー画面で精算書PDFが生成される
+6. プレビュー画面から `printing` の標準共有UIを使って共有可能
+7. アプリ再起動後も、作成した精算書・設定値が復元される
+8. 将来的に「タグ追加」「プロジェクト分類」「レシート画像添付」などを追加できるよう、既存クラスや画面構成が極端に窮屈になっていないこと
+
+```
+```
