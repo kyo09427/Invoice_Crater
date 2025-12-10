@@ -39,10 +39,7 @@ dev_dependencies:
   # コード生成
   build_runner: ^2.4.13
   hive_generator: ^2.0.1
-
-# hive_generatorの古いanalyzer依存関係をオーバーライド
-dependency_overrides:
-  analyzer: ^9.0.0
+  analyzer: ^6.4.1
 
 flutter:
   uses-material-design: true
