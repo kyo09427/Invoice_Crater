@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'application/providers/core_providers.dart';
 import 'data/models/app_settings.dart';
@@ -48,13 +47,11 @@ class InvoiceCreatorApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
-        fontFamily: 'NotoSansJP', // Assuming Japanese font usually
       ),
       initialRoute: '/',
       routes: {
         '/': (context) => const ExpenseSheetListScreen(),
         '/settings': (context) => const SettingsScreen(),
-        // Dynamic routes with arguments will need onGenerateRoute or managing arguments manually in build
       },
       onGenerateRoute: (settings) {
         if (settings.name == ExpenseSheetEditScreen.routeName) {
@@ -69,7 +66,7 @@ class InvoiceCreatorApp extends StatelessWidget {
             builder: (context) => ExpensePdfPreviewScreen(sheetId: sheetId),
           );
         }
-        return null; // Let unknown routes fail or go to home
+        return null;
       },
     );
   }

@@ -5,15 +5,17 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
-import '../../data/models/expense_sheet.dart';
+import '../data/models/expense_sheet.dart';
 
 Future<Uint8List> buildExpenseSheetPdf(
   PdfPageFormat format,
   ExpenseSheet sheet,
 ) async {
   final doc = pw.Document();
-  final font = await PdfGoogleFonts.notoSansJp();
-  final fontBold = await PdfGoogleFonts.notoSansJp();
+  
+  // 日本語フォントを取得
+  final font = await PdfGoogleFonts.notoSansRegular();
+  final fontBold = await PdfGoogleFonts.notoSansBold();
 
   final dateFormat = DateFormat('yyyy/MM/dd');
   final numberFormat = NumberFormat('#,###');
@@ -26,7 +28,7 @@ Future<Uint8List> buildExpenseSheetPdf(
           base: font,
           bold: fontBold,
         ),
-        margin: const pw.EdgeInsets.all(25 * PdfPageFormat.mm), // 25mm margin
+        margin: const pw.EdgeInsets.all(25 * PdfPageFormat.mm),
       ),
       header: (context) {
         return pw.Column(
@@ -67,8 +69,12 @@ Future<Uint8List> buildExpenseSheetPdf(
                 '${numberFormat.format(item.amount)} 円',
               ];
             }).toList(),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+            headerStyle: pw.TextStyle(
+              fontWeight: pw.FontWeight.bold,
+            ),
+            headerDecoration: const pw.BoxDecoration(
+              color: PdfColors.grey300,
+            ),
             cellAlignments: {
               0: pw.Alignment.centerLeft,
               1: pw.Alignment.centerLeft,
