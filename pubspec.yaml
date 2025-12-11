@@ -46,6 +46,8 @@ flutter:
   uses-material-design: true
   
   # 将来的にアセットを追加する場合はここに記述
+  assets:
+    - assets/fonts/
   # assets:
   #   - images/
   #   - assets/

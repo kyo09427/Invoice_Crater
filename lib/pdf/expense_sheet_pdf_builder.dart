@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart' show rootBundle;
+
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -14,8 +16,11 @@ Future<Uint8List> buildExpenseSheetPdf(
   final doc = pw.Document();
   
   // 日本語フォントを取得
-  final font = await PdfGoogleFonts.notoSansRegular();
-  final fontBold = await PdfGoogleFonts.notoSansBold();
+  final fontData = await rootBundle.load("assets/fonts/NotoSansJP-Regular.ttf");
+  final fontBoldData = await rootBundle.load("assets/fonts/NotoSansJP-Bold.ttf");
+  
+  final font = pw.Font.ttf(fontData);
+  final fontBold = pw.Font.ttf(fontBoldData);
 
   final dateFormat = DateFormat('yyyy/MM/dd');
   final numberFormat = NumberFormat('#,###');
