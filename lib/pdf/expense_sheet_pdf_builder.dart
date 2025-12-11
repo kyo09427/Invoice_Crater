@@ -1,110 +1,140 @@
 import 'dart:typed_data';
-
 import 'package:flutter/services.dart' show rootBundle;
-
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../data/models/expense_sheet.dart';
 
+/// PDF生成のエラーハンドリングを強化したバージョン
 Future<Uint8List> buildExpenseSheetPdf(
   PdfPageFormat format,
   ExpenseSheet sheet,
 ) async {
   final doc = pw.Document();
   
-  // 日本語フォントを取得
-  final fontData = await rootBundle.load("assets/fonts/NotoSansJP-Regular.ttf");
-  final fontBoldData = await rootBundle.load("assets/fonts/NotoSansJP-Bold.ttf");
-  
-  final font = pw.Font.ttf(fontData);
-  final fontBold = pw.Font.ttf(fontBoldData);
+  try {
+    // 日本語フォントの読み込み（エラーハンドリング付き）
+    pw.Font font;
+    pw.Font fontBold;
+    
+    try {
+      final fontData = await rootBundle.load("assets/fonts/NotoSansJP-Regular.ttf");
+      final fontBoldData = await rootBundle.load("assets/fonts/NotoSansJP-Bold.ttf");
+      font = pw.Font.ttf(fontData);
+      fontBold = pw.Font.ttf(fontBoldData);
+    } catch (e) {
+      // フォントファイルが見つからない場合はデフォルトフォントを使用
+      // 注: 日本語が文字化けする可能性がある
+      print('Warning: Custom font not found. Using default font. Error: $e');
+      // デフォルトフォントを使用（日本語サポートなし）
+      font = pw.Font.helvetica();
+      fontBold = pw.Font.helveticaBold();
+    }
 
-  final dateFormat = DateFormat('yyyy/MM/dd');
-  final numberFormat = NumberFormat('#,###');
+    final dateFormat = DateFormat('yyyy/MM/dd');
+    final numberFormat = NumberFormat('#,###');
 
-  doc.addPage(
-    pw.MultiPage(
-      pageTheme: pw.PageTheme(
-        pageFormat: format,
-        theme: pw.ThemeData.withFont(
-          base: font,
-          bold: fontBold,
+    doc.addPage(
+      pw.MultiPage(
+        pageTheme: pw.PageTheme(
+          pageFormat: format,
+          theme: pw.ThemeData.withFont(
+            base: font,
+            bold: fontBold,
+          ),
+          margin: const pw.EdgeInsets.all(25 * PdfPageFormat.mm),
         ),
-        margin: const pw.EdgeInsets.all(25 * PdfPageFormat.mm),
-      ),
-      header: (context) {
-        return pw.Column(
-          children: [
+        header: (context) {
+          return pw.Column(
+            children: [
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('申請者: ${sheet.applicantName}'),
+                  pw.Text('作成日: ${dateFormat.format(sheet.createdAt)}'),
+                ],
+              ),
+              pw.SizedBox(height: 10),
+              pw.Center(
+                child: pw.Text(
+                  sheet.title,
+                  style: pw.TextStyle(
+                    fontSize: 24,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Divider(),
+              pw.SizedBox(height: 20),
+            ],
+          );
+        },
+        build: (context) {
+          // 明細が空の場合の処理
+          if (sheet.items.isEmpty) {
+            return [
+              pw.Center(
+                child: pw.Text(
+                  '明細がありません',
+                  style: pw.TextStyle(
+                    fontSize: 16,
+                    color: PdfColors.grey600,
+                  ),
+                ),
+              ),
+            ];
+          }
+
+          return [
+            pw.Table.fromTextArray(
+              headers: ['支払日', '支払い先', '目的・用途', '決済手段', '金額'],
+              data: sheet.items.map((item) {
+                return [
+                  dateFormat.format(item.date),
+                  item.payee,
+                  item.purpose,
+                  item.paymentMethod,
+                  '${numberFormat.format(item.amount)} 円',
+                ];
+              }).toList(),
+              headerStyle: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+              ),
+              headerDecoration: const pw.BoxDecoration(
+                color: PdfColors.grey300,
+              ),
+              cellAlignments: {
+                0: pw.Alignment.centerLeft,
+                1: pw.Alignment.centerLeft,
+                2: pw.Alignment.centerLeft,
+                3: pw.Alignment.centerLeft,
+                4: pw.Alignment.centerRight,
+              },
+            ),
+            pw.SizedBox(height: 20),
             pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              mainAxisAlignment: pw.MainAxisAlignment.end,
               children: [
-                pw.Text('申請者: ${sheet.applicantName}'),
-                pw.Text('作成日: ${dateFormat.format(sheet.createdAt)}'),
+                pw.Text(
+                  '合計: ${numberFormat.format(sheet.totalAmount)} 円',
+                  style: pw.TextStyle(
+                    fontSize: 18,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
               ],
             ),
-            pw.SizedBox(height: 10),
-            pw.Center(
-              child: pw.Text(
-                '精算書',
-                style: pw.TextStyle(
-                  fontSize: 24,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            ),
-            pw.SizedBox(height: 10),
-            pw.Divider(),
-            pw.SizedBox(height: 20),
-          ],
-        );
-      },
-      build: (context) {
-        return [
-          pw.Table.fromTextArray(
-            headers: ['支払日', '支払い先', '目的・用途', '決済手段', '金額'],
-            data: sheet.items.map((item) {
-              return [
-                dateFormat.format(item.date),
-                item.payee,
-                item.purpose,
-                item.paymentMethod,
-                '${numberFormat.format(item.amount)} 円',
-              ];
-            }).toList(),
-            headerStyle: pw.TextStyle(
-              fontWeight: pw.FontWeight.bold,
-            ),
-            headerDecoration: const pw.BoxDecoration(
-              color: PdfColors.grey300,
-            ),
-            cellAlignments: {
-              0: pw.Alignment.centerLeft,
-              1: pw.Alignment.centerLeft,
-              2: pw.Alignment.centerLeft,
-              3: pw.Alignment.centerLeft,
-              4: pw.Alignment.centerRight,
-            },
-          ),
-          pw.SizedBox(height: 20),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.end,
-            children: [
-              pw.Text(
-                '合計: ${numberFormat.format(sheet.totalAmount)} 円',
-                style: pw.TextStyle(
-                  fontSize: 18,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ];
-      },
-    ),
-  );
+          ];
+        },
+      ),
+    );
 
-  return doc.save();
+    return doc.save();
+  } catch (e) {
+    // PDF生成エラー時は空のPDFを返すか、エラーを再スローする
+    print('Error generating PDF: $e');
+    rethrow;
+  }
 }

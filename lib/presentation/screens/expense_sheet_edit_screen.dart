@@ -25,7 +25,6 @@ class _ExpenseSheetEditScreenState
   late TextEditingController _titleController;
   late TextEditingController _applicantController;
   DateTime? _createdAt;
-
   bool _initialized = false;
 
   @override
@@ -49,21 +48,27 @@ class _ExpenseSheetEditScreenState
     _createdAt = sheet.createdAt;
     _initialized = true;
 
-    // Load default applicant name if empty
+    // デフォルト申請者名の設定
     if (sheet.applicantName.isEmpty) {
       final settings = ref.read(appSettingsProvider).asData?.value;
       if (settings != null && settings.defaultApplicantName.isNotEmpty) {
         _applicantController.text = settings.defaultApplicantName;
-        // Also update the sheet immediately? Maybe wait for user action.
-        // Let's just prepopulate the UI.
       }
     }
   }
 
   Future<void> _updateSheet(ExpenseSheet sheet) async {
-    await ref
-        .read(expenseSheetProvider(widget.sheetId).notifier)
-        .updateSheet(sheet);
+    try {
+      await ref
+          .read(expenseSheetProvider(widget.sheetId).notifier)
+          .updateSheet(sheet);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存に失敗しました: $e')),
+        );
+      }
+    }
   }
 
   void _onSaveHeader() {
@@ -71,8 +76,8 @@ class _ExpenseSheetEditScreenState
     if (sheet == null) return;
 
     final newSheet = sheet.copyWith(
-      title: _titleController.text,
-      applicantName: _applicantController.text,
+      title: _titleController.text.trim(),
+      applicantName: _applicantController.text.trim(),
       createdAt: _createdAt,
     );
     _updateSheet(newSheet);
@@ -90,7 +95,7 @@ class _ExpenseSheetEditScreenState
       if (sheet != null) {
         final newItems = List<ExpenseItem>.from(sheet.items)..add(newItem);
         final newSheet = sheet.copyWith(items: newItems);
-        _updateSheet(newSheet);
+        await _updateSheet(newSheet);
       }
     }
   }
@@ -109,21 +114,85 @@ class _ExpenseSheetEditScreenState
           return e.id == updatedItem.id ? updatedItem : e;
         }).toList();
         final newSheet = sheet.copyWith(items: newItems);
-        _updateSheet(newSheet);
+        await _updateSheet(newSheet);
       }
     }
   }
 
   Future<void> _onDeleteItem(ExpenseItem item) async {
-    final sheet = ref.read(expenseSheetProvider(widget.sheetId)).value;
-    if (sheet != null) {
-      final newItems = List<ExpenseItem>.from(sheet.items)
-        ..removeWhere((e) => e.id == item.id);
-      final newSheet = sheet.copyWith(items: newItems);
-      _updateSheet(newSheet);
+    // 削除確認ダイアログを表示
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('削除確認'),
+        content: const Text('この明細を削除しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final sheet = ref.read(expenseSheetProvider(widget.sheetId)).value;
+      if (sheet != null) {
+        final newItems = List<ExpenseItem>.from(sheet.items)
+          ..removeWhere((e) => e.id == item.id);
+        final newSheet = sheet.copyWith(items: newItems);
+        await _updateSheet(newSheet);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('明細を削除しました')),
+          );
+        }
+      }
     }
   }
-  
+
+  void _onNavigateToPdf() {
+    final sheet = ref.read(expenseSheetProvider(widget.sheetId)).value;
+    
+    // バリデーション
+    if (sheet == null) return;
+    
+    if (sheet.title.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('タイトルを入力してください')),
+      );
+      return;
+    }
+    
+    if (sheet.applicantName.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('申請者名を入力してください')),
+      );
+      return;
+    }
+    
+    if (sheet.items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('明細を1件以上追加してください')),
+      );
+      return;
+    }
+
+    // ヘッダー情報を保存してから遷移
+    _onSaveHeader();
+    
+    Navigator.pushNamed(
+      context,
+      ExpensePdfPreviewScreen.routeName,
+      arguments: widget.sheetId,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sheetAsync = ref.watch(expenseSheetProvider(widget.sheetId));
@@ -134,15 +203,8 @@ class _ExpenseSheetEditScreenState
         actions: [
           IconButton(
             icon: const Icon(Icons.picture_as_pdf),
-            onPressed: () {
-               // Update header before navigating just in case
-               _onSaveHeader();
-               Navigator.pushNamed(
-                context,
-                ExpensePdfPreviewScreen.routeName,
-                arguments: widget.sheetId,
-              );
-            },
+            tooltip: 'PDFプレビュー',
+            onPressed: _onNavigateToPdf,
           ),
         ],
       ),
@@ -155,25 +217,41 @@ class _ExpenseSheetEditScreenState
 
           return Column(
             children: [
-              // Header
+              // ヘッダー情報入力
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   children: [
                     TextField(
                       controller: _titleController,
-                      decoration: const InputDecoration(labelText: '精算書タイトル'),
+                      decoration: const InputDecoration(
+                        labelText: '精算書タイトル',
+                        hintText: '例: 11月度 生徒会精算書',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLength: 100,
                       onChanged: (_) => _onSaveHeader(),
                     ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: _applicantController,
-                      decoration: const InputDecoration(labelText: '申請者名'),
-                       onChanged: (_) => _onSaveHeader(),
+                      decoration: const InputDecoration(
+                        labelText: '申請者名',
+                        hintText: '例: 山田 太郎',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLength: 50,
+                      onChanged: (_) => _onSaveHeader(),
                     ),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         const Text('作成日: '),
-                        TextButton(
+                        TextButton.icon(
+                          icon: const Icon(Icons.calendar_today, size: 16),
+                          label: Text(
+                            FormattingUtils.formatDate(_createdAt ?? DateTime.now()),
+                          ),
                           onPressed: () async {
                             final picked = await showDatePicker(
                               context: context,
@@ -188,63 +266,157 @@ class _ExpenseSheetEditScreenState
                               _onSaveHeader();
                             }
                           },
-                          child: Text(FormattingUtils.formatDate(
-                              _createdAt ?? DateTime.now())),
                         ),
                       ],
                     ),
                   ],
                 ),
               ),
-              const Divider(),
-              // Items List
+              const Divider(height: 1),
+              
+              // 明細一覧
               Expanded(
-                child: ListView.builder(
-                  itemCount: sheet.items.length,
-                  itemBuilder: (context, index) {
-                    final item = sheet.items[index];
-                    return Dismissible(
-                      key: Key(item.id),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        color: Colors.red,
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.only(right: 16),
-                        child: const Icon(Icons.delete, color: Colors.white),
-                      ),
-                      onDismissed: (_) => _onDeleteItem(item),
-                      child: ListTile(
-                        leading: Column(
+                child: sheet.items.isEmpty
+                    ? Center(
+                        child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            Icon(
+                              Icons.receipt_long,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
                             Text(
-                              '${item.date.month}/${item.date.day}',
-                              style: Theme.of(context).textTheme.bodySmall,
+                              '明細がありません',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '下のボタンから明細を追加してください',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[500],
+                              ),
                             ),
                           ],
                         ),
-                        title: Text(item.payee),
-                        subtitle: Text(item.purpose),
-                        trailing: Text(FormattingUtils.formatCurrency(item.amount)),
-                        onTap: () => _onEditItem(item),
+                      )
+                    : ListView.builder(
+                        itemCount: sheet.items.length,
+                        padding: const EdgeInsets.only(bottom: 16),
+                        itemBuilder: (context, index) {
+                          final item = sheet.items[index];
+                          return Dismissible(
+                            key: Key(item.id),
+                            direction: DismissDirection.endToStart,
+                            confirmDismiss: (_) async {
+                              return await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('削除確認'),
+                                  content: const Text('この明細を削除しますか？'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, false),
+                                      child: const Text('キャンセル'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, true),
+                                      child: const Text(
+                                        '削除',
+                                        style: TextStyle(color: Colors.red),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            onDismissed: (_) => _onDeleteItem(item),
+                            background: Container(
+                              color: Colors.red,
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 16),
+                              child: const Icon(
+                                Icons.delete,
+                                color: Colors.white,
+                              ),
+                            ),
+                            child: ListTile(
+                              leading: Container(
+                                width: 48,
+                                alignment: Alignment.center,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      '${item.date.month}/${item.date.day}',
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              title: Text(item.payee),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(item.purpose),
+                                  Text(
+                                    item.paymentMethod,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              trailing: Text(
+                                FormattingUtils.formatCurrency(item.amount),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              onTap: () => _onEditItem(item),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
               ),
-              // Footer
+              
+              // フッター（合計と追加ボタン）
               Container(
                 padding: const EdgeInsets.all(16),
-                color: Theme.of(context).colorScheme.surfaceVariant,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceVariant,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, -2),
+                    ),
+                  ],
+                ),
                 child: Column(
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('合計金額:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const Text(
+                          '合計金額:',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         Text(
                           FormattingUtils.formatCurrency(sheet.totalAmount),
-                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ],
                     ),
@@ -255,6 +427,9 @@ class _ExpenseSheetEditScreenState
                         onPressed: _onAddItem,
                         icon: const Icon(Icons.add),
                         label: const Text('明細を追加'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
                       ),
                     ),
                   ],
@@ -264,7 +439,23 @@ class _ExpenseSheetEditScreenState
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, s) => Center(child: Text('Error: $e')),
+        error: (e, s) => Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 16),
+              Text('エラーが発生しました: $e'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  ref.invalidate(expenseSheetProvider(widget.sheetId));
+                },
+                child: const Text('再読み込み'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

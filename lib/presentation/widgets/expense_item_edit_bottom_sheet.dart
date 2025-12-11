@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../application/providers/app_settings_provider.dart';
@@ -21,6 +20,7 @@ class ExpenseItemEditBottomSheet extends ConsumerStatefulWidget {
 class _ExpenseItemEditBottomSheetState
     extends ConsumerState<ExpenseItemEditBottomSheet> {
   final _formKey = GlobalKey<FormState>();
+  final _amountFocusNode = FocusNode();
 
   late DateTime _date;
   late TextEditingController _payeeController;
@@ -29,6 +29,8 @@ class _ExpenseItemEditBottomSheetState
   late TextEditingController _amountController;
   late TextEditingController _noteController;
 
+  bool _isInitialized = false;
+
   @override
   void initState() {
     super.initState();
@@ -36,14 +38,11 @@ class _ExpenseItemEditBottomSheetState
     _date = item?.date ?? DateTime.now();
     _payeeController = TextEditingController(text: item?.payee);
     _purposeController = TextEditingController(text: item?.purpose);
-    _amountController =
-        TextEditingController(text: item?.amount.toString() ?? '');
+    _amountController = TextEditingController(
+      text: item?.amount.toString() ?? '',
+    );
     _noteController = TextEditingController(text: item?.note);
-    // Payment method will be set in didChangeDependencies or build when we have data
-    // But we need a default.
-    // _paymentMethod will be initialized in build if not set? No, state needs it.
-    // We'll set a temporary default and update it from settings if it's new.
-    _paymentMethod = item?.paymentMethod ?? ''; 
+    _paymentMethod = item?.paymentMethod ?? '';
   }
 
   @override
@@ -52,7 +51,60 @@ class _ExpenseItemEditBottomSheetState
     _purposeController.dispose();
     _amountController.dispose();
     _noteController.dispose();
+    _amountFocusNode.dispose();
     super.dispose();
+  }
+
+  void _initializePaymentMethod(List<String> candidates) {
+    if (_isInitialized) return;
+    
+    if (_paymentMethod.isEmpty && candidates.isNotEmpty) {
+      _paymentMethod = candidates.first;
+    } else if (_paymentMethod.isEmpty) {
+      _paymentMethod = '現金'; // フォールバック
+    }
+    
+    _isInitialized = true;
+  }
+
+  void _onSave() {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    // 入力値の取得とトリム
+    final payee = _payeeController.text.trim();
+    final purpose = _purposeController.text.trim();
+    final amountStr = _amountController.text.trim();
+    final note = _noteController.text.trim();
+
+    // 最終バリデーション
+    if (payee.isEmpty || purpose.isEmpty || amountStr.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('必須項目を入力してください')),
+      );
+      return;
+    }
+
+    final amount = int.tryParse(amountStr);
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('金額は1以上の整数を入力してください')),
+      );
+      return;
+    }
+
+    final newItem = ExpenseItem(
+      id: widget.item?.id ?? const Uuid().v4(),
+      date: _date,
+      payee: payee,
+      purpose: purpose,
+      paymentMethod: _paymentMethod,
+      amount: amount,
+      note: note.isEmpty ? null : note,
+    );
+
+    Navigator.pop(context, newItem);
   }
 
   @override
@@ -61,14 +113,7 @@ class _ExpenseItemEditBottomSheetState
 
     return appSettingsAsync.when(
       data: (settings) {
-        // Initialize payment method if empty (new item)
-        if (_paymentMethod.isEmpty) {
-          if (settings.paymentMethodCandidates.isNotEmpty) {
-            _paymentMethod = settings.paymentMethodCandidates.first;
-          } else {
-            _paymentMethod = '現金'; // Fallback
-          }
-        }
+        _initializePaymentMethod(settings.paymentMethodCandidates);
 
         return Padding(
           padding: EdgeInsets.only(
@@ -84,58 +129,122 @@ class _ExpenseItemEditBottomSheetState
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    widget.item == null ? '明細追加' : '明細編集',
-                    style: Theme.of(context).textTheme.titleLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  // Date
+                  // ヘッダー
                   Row(
                     children: [
-                      const Text('支払日: '),
-                      TextButton(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: _date,
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100),
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              _date = picked;
-                            });
-                          }
-                        },
-                        child: Text(FormattingUtils.formatDate(_date)),
+                      Expanded(
+                        child: Text(
+                          widget.item == null ? '明細追加' : '明細編集',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
                       ),
                     ],
                   ),
-                  
-                  // Payee
+                  const SizedBox(height: 16),
+
+                  // 支払日
+                  Card(
+                    child: InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _date,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime(2100),
+                          locale: const Locale('ja', 'JP'),
+                        );
+                        if (picked != null) {
+                          setState(() {
+                            _date = picked;
+                          });
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '支払日',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                  Text(
+                                    FormattingUtils.formatDate(_date),
+                                    style: Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(Icons.arrow_forward_ios, size: 16),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 支払い先
                   TextFormField(
                     controller: _payeeController,
-                    decoration: const InputDecoration(labelText: '支払い先'),
-                    validator: (value) =>
-                        value == null || value.isEmpty ? '必須です' : null,
+                    decoration: const InputDecoration(
+                      labelText: '支払い先 *',
+                      hintText: '例: ○○商店',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.store),
+                    ),
+                    maxLength: 100,
+                    textInputAction: TextInputAction.next,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return '支払い先を入力してください';
+                      }
+                      return null;
+                    },
                   ),
-                  
-                  // Purpose
+                  const SizedBox(height: 16),
+
+                  // 目的・用途
                   TextFormField(
                     controller: _purposeController,
-                    decoration: const InputDecoration(labelText: '目的・用途'),
-                    validator: (value) =>
-                        value == null || value.isEmpty ? '必須です' : null,
+                    decoration: const InputDecoration(
+                      labelText: '目的・用途 *',
+                      hintText: '例: 文房具購入',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.description),
+                    ),
+                    maxLength: 200,
+                    textInputAction: TextInputAction.next,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return '目的・用途を入力してください';
+                      }
+                      return null;
+                    },
                   ),
-                  
-                  // Payment Method
+                  const SizedBox(height: 16),
+
+                  // 決済手段
                   DropdownButtonFormField<String>(
                     value: _paymentMethod,
-                    decoration: const InputDecoration(labelText: '決済手段'),
+                    decoration: const InputDecoration(
+                      labelText: '決済手段 *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.payment),
+                    ),
                     items: settings.paymentMethodCandidates
-                        .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                        .map((method) => DropdownMenuItem(
+                              value: method,
+                              child: Text(method),
+                            ))
                         .toList(),
                     onChanged: (value) {
                       if (value != null) {
@@ -144,31 +253,68 @@ class _ExpenseItemEditBottomSheetState
                         });
                       }
                     },
-                  ),
-                  
-                  // Amount
-                  TextFormField(
-                    controller: _amountController,
-                    decoration: const InputDecoration(labelText: '金額', suffixText: '円'),
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     validator: (value) {
-                      if (value == null || value.isEmpty) return '必須です';
-                      final parsed = int.tryParse(value);
-                      if (parsed == null || parsed <= 0) return '0より大きい整数を入力';
+                      if (value == null || value.isEmpty) {
+                        return '決済手段を選択してください';
+                      }
                       return null;
                     },
                   ),
-                  
-                  // Note
+                  const SizedBox(height: 16),
+
+                  // 金額
+                  TextFormField(
+                    controller: _amountController,
+                    focusNode: _amountFocusNode,
+                    decoration: const InputDecoration(
+                      labelText: '金額 *',
+                      hintText: '1000',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.payments),
+                      suffixText: '円',
+                    ),
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(9),
+                    ],
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return '金額を入力してください';
+                      }
+                      final amount = int.tryParse(value);
+                      if (amount == null) {
+                        return '有効な数値を入力してください';
+                      }
+                      if (amount <= 0) {
+                        return '1円以上の金額を入力してください';
+                      }
+                      if (amount > 999999999) {
+                        return '金額が大きすぎます';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 備考（任意）
                   TextFormField(
                     controller: _noteController,
-                    decoration: const InputDecoration(labelText: '備考 (任意)'),
+                    decoration: const InputDecoration(
+                      labelText: '備考（任意）',
+                      hintText: '追加情報があれば入力してください',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.note),
+                    ),
+                    maxLength: 500,
+                    maxLines: 3,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) => _onSave(),
                   ),
-                  
                   const SizedBox(height: 24),
-                  
-                  // Buttons
+
+                  // ボタン
                   Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
@@ -177,22 +323,16 @@ class _ExpenseItemEditBottomSheetState
                         child: const Text('キャンセル'),
                       ),
                       const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: () {
-                          if (_formKey.currentState!.validate()) {
-                            final newItem = ExpenseItem(
-                              id: widget.item?.id ?? const Uuid().v4(),
-                              date: _date,
-                              payee: _payeeController.text,
-                              purpose: _purposeController.text,
-                              paymentMethod: _paymentMethod,
-                              amount: int.parse(_amountController.text),
-                              note: _noteController.text,
-                            );
-                            Navigator.pop(context, newItem);
-                          }
-                        },
-                        child: const Text('保存'),
+                      ElevatedButton.icon(
+                        onPressed: _onSave,
+                        icon: const Icon(Icons.check),
+                        label: const Text('保存'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -203,8 +343,30 @@ class _ExpenseItemEditBottomSheetState
           ),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, s) => Center(child: Text('Error: $e')),
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(48.0),
+          child: CircularProgressIndicator(),
+        ),
+      ),
+      error: (e, s) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 16),
+              Text('設定の読み込みに失敗しました: $e'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('閉じる'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
