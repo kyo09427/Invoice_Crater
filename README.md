@@ -607,6 +607,7 @@ class AppConstants {
 
 ---
 
+<<<<<<< HEAD
 ## 📊 プロジェクト統計
 
 - **総コード行数**: 約3,500行（生成コードを除く）
@@ -619,3 +620,6 @@ class AppConstants {
 **Built with ❤️ using Flutter**
 
 **Last Updated**: 2024年12月 - v1.1.0リリース
+=======
+**Built with ❤️ using Flutter**
+>>>>>>> 8dcfaee1d43ee71480e69c6d96cc0eb9c12b9ecf
