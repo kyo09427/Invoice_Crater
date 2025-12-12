@@ -4,22 +4,185 @@ import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 
 import '../../application/providers/expense_sheet_provider.dart';
+import '../../data/models/expense_sheet.dart';
+import '../../data/models/expense_item.dart';
 import '../../pdf/expense_sheet_pdf_builder.dart';
 
-class ExpensePdfPreviewScreen extends ConsumerWidget {
+/// PDFソート種別
+enum PdfSortType {
+  dateAsc('支払日 (古い順)', Icons.calendar_today),
+  dateDesc('支払日 (新しい順)', Icons.calendar_today),
+  payeeAsc('支払先 (A→Z)', Icons.store),
+  payeeDesc('支払先 (Z→A)', Icons.store),
+  amountAsc('金額 (安い順)', Icons.attach_money),
+  amountDesc('金額 (高い順)', Icons.attach_money),
+  purposeAsc('用途 (A→Z)', Icons.description),
+  purposeDesc('用途 (Z→A)', Icons.description);
+
+  const PdfSortType(this.label, this.icon);
+  final String label;
+  final IconData icon;
+
+  /// 表示用の短いラベル
+  String get shortLabel {
+    switch (this) {
+      case PdfSortType.dateAsc:
+        return '支払日↑';
+      case PdfSortType.dateDesc:
+        return '支払日↓';
+      case PdfSortType.payeeAsc:
+        return '支払先↑';
+      case PdfSortType.payeeDesc:
+        return '支払先↓';
+      case PdfSortType.amountAsc:
+        return '金額↑';
+      case PdfSortType.amountDesc:
+        return '金額↓';
+      case PdfSortType.purposeAsc:
+        return '用途↑';
+      case PdfSortType.purposeDesc:
+        return '用途↓';
+    }
+  }
+}
+
+class ExpensePdfPreviewScreen extends ConsumerStatefulWidget {
   static const routeName = '/pdf_preview';
   final String sheetId;
 
   const ExpensePdfPreviewScreen({super.key, required this.sheetId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final sheetAsync = ref.watch(expenseSheetProvider(sheetId));
+  ConsumerState<ExpensePdfPreviewScreen> createState() =>
+      _ExpensePdfPreviewScreenState();
+}
+
+class _ExpensePdfPreviewScreenState
+    extends ConsumerState<ExpensePdfPreviewScreen> {
+  /// 現在のソート種別
+  PdfSortType _currentSortType = PdfSortType.dateAsc;
+
+  /// 明細をソート
+  List<ExpenseItem> _sortItems(List<ExpenseItem> items) {
+    final sortedItems = List<ExpenseItem>.from(items);
+
+    switch (_currentSortType) {
+      case PdfSortType.dateAsc:
+        sortedItems.sort((a, b) => a.date.compareTo(b.date));
+        break;
+      case PdfSortType.dateDesc:
+        sortedItems.sort((a, b) => b.date.compareTo(a.date));
+        break;
+      case PdfSortType.payeeAsc:
+        sortedItems.sort((a, b) => a.payee.compareTo(b.payee));
+        break;
+      case PdfSortType.payeeDesc:
+        sortedItems.sort((a, b) => b.payee.compareTo(a.payee));
+        break;
+      case PdfSortType.amountAsc:
+        sortedItems.sort((a, b) => a.amount.compareTo(b.amount));
+        break;
+      case PdfSortType.amountDesc:
+        sortedItems.sort((a, b) => b.amount.compareTo(a.amount));
+        break;
+      case PdfSortType.purposeAsc:
+        sortedItems.sort((a, b) => a.purpose.compareTo(b.purpose));
+        break;
+      case PdfSortType.purposeDesc:
+        sortedItems.sort((a, b) => b.purpose.compareTo(a.purpose));
+        break;
+    }
+
+    return sortedItems;
+  }
+
+  /// ソート選択ダイアログ
+  Future<void> _showSortDialog() async {
+    final selected = await showDialog<PdfSortType>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('明細の並び順を選択'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: PdfSortType.values.length,
+              separatorBuilder: (context, index) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final sortType = PdfSortType.values[index];
+                final isSelected = sortType == _currentSortType;
+
+                return ListTile(
+                  leading: Icon(
+                    sortType.icon,
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
+                  title: Text(
+                    sortType.label,
+                    style: TextStyle(
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? Icon(
+                          Icons.check,
+                          color: Theme.of(context).colorScheme.primary,
+                        )
+                      : null,
+                  onTap: () => Navigator.pop(context, sortType),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('キャンセル'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (selected != null && selected != _currentSortType) {
+      setState(() {
+        _currentSortType = selected;
+      });
+
+      // ソート変更のフィードバック
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('並び順を「${selected.label}」に変更しました'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sheetAsync = ref.watch(expenseSheetProvider(widget.sheetId));
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('PDFプレビュー'),
         actions: [
+          // ソートボタン
+          IconButton(
+            icon: const Icon(Icons.sort),
+            tooltip: '並び替え',
+            onPressed: _showSortDialog,
+          ),
+          // ヘルプボタン
           IconButton(
             icon: const Icon(Icons.help_outline),
             tooltip: 'ヘルプ',
@@ -28,9 +191,16 @@ class ExpensePdfPreviewScreen extends ConsumerWidget {
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('PDFプレビュー'),
-                  content: const Text(
-                    '右上の共有アイコンからPDFを保存・共有できます。\n'
-                    'プリンターアイコンから印刷できます。',
+                  content: const Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('📄 右上の共有アイコンからPDFを保存・共有できます'),
+                      SizedBox(height: 8),
+                      Text('🖨️ プリンターアイコンから印刷できます'),
+                      SizedBox(height: 8),
+                      Text('🔄 並び替えボタンで明細の順序を変更できます'),
+                    ],
                   ),
                   actions: [
                     TextButton(
@@ -81,76 +251,146 @@ class ExpensePdfPreviewScreen extends ConsumerWidget {
             );
           }
 
-          return PdfPreview(
-            build: (format) async {
-              try {
-                return await buildExpenseSheetPdf(format, sheet);
-              } catch (e) {
-                // エラーが発生した場合はスナックバーで通知
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('PDF生成エラー: $e'),
-                      backgroundColor: Colors.red,
-                      duration: const Duration(seconds: 5),
+          // ソートされた明細で新しい精算書を作成
+          final sortedSheet = sheet.copyWith(
+            items: _sortItems(sheet.items),
+          );
+
+          return Column(
+            children: [
+              // ソート状態表示バー
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Theme.of(context).dividerColor,
+                      width: 1,
                     ),
-                  );
-                }
-                rethrow;
-              }
-            },
-            canChangeOrientation: false,
-            canChangePageFormat: false,
-            initialPageFormat: PdfPageFormat.a4,
-            pdfFileName: '${sheet.title}.pdf',
-            allowPrinting: true,
-            allowSharing: true,
-            maxPageWidth: 700,
-            onError: (context, error) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.error_outline,
-                        size: 64,
-                        color: Colors.red,
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'PDF生成エラー',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        error.toString(),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.grey),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton.icon(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.arrow_back),
-                        label: const Text('編集画面に戻る'),
-                      ),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: () {
-                          // 再試行
-                          ref.invalidate(expenseSheetProvider(sheetId));
-                        },
-                        child: const Text('再試行'),
-                      ),
-                    ],
                   ),
                 ),
-              );
-            },
+                child: Row(
+                  children: [
+                    Icon(
+                      _currentSortType.icon,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '並び順: ${_currentSortType.label}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color:
+                            Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '(${sortedSheet.items.length}件)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _showSortDialog,
+                      icon: const Icon(Icons.swap_vert, size: 16),
+                      label: const Text('変更'),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // PDFプレビュー
+              Expanded(
+                child: PdfPreview(
+                  build: (format) async {
+                    try {
+                      return await buildExpenseSheetPdf(format, sortedSheet);
+                    } catch (e) {
+                      // エラーが発生した場合はスナックバーで通知
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('PDF生成エラー: $e'),
+                            backgroundColor: Colors.red,
+                            duration: const Duration(seconds: 5),
+                          ),
+                        );
+                      }
+                      rethrow;
+                    }
+                  },
+                  canChangeOrientation: false,
+                  canChangePageFormat: false,
+                  initialPageFormat: PdfPageFormat.a4,
+                  pdfFileName: '${sheet.title}_${_currentSortType.shortLabel}.pdf',
+                  allowPrinting: true,
+                  allowSharing: true,
+                  maxPageWidth: 700,
+                  onError: (context, error) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 64,
+                              color: Colors.red,
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'PDF生成エラー',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              error.toString(),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                            const SizedBox(height: 24),
+                            ElevatedButton.icon(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.arrow_back),
+                              label: const Text('編集画面に戻る'),
+                            ),
+                            const SizedBox(height: 8),
+                            TextButton(
+                              onPressed: () {
+                                // 再試行
+                                ref.invalidate(
+                                    expenseSheetProvider(widget.sheetId));
+                              },
+                              child: const Text('再試行'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           );
         },
         loading: () => const Center(
