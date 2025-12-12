@@ -75,6 +75,28 @@ class _ExpenseSheetEditScreenState
     _updateSheet(newSheet);
   }
 
+  // 🔧 修正: 作成日選択処理を独立したメソッドに
+  Future<void> _selectDate() async {
+    final initialDate = _createdAt ?? DateTime.now();
+    
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      // 🔧 修正: localeパラメータを削除（不要）
+      // Flutter 3.10以降は自動的にシステムのロケールを使用
+    );
+    
+    if (picked != null && mounted) {
+      setState(() {
+        _createdAt = picked;
+      });
+      // 日付変更後に自動保存
+      _onSaveHeader();
+    }
+  }
+
   Future<void> _onAddItem() async {
     final newItem = await showModalBottomSheet<ExpenseItem>(
       context: context,
@@ -104,7 +126,6 @@ class _ExpenseSheetEditScreenState
     }
   }
 
-  /// スワイプ削除の確認ダイアログ
   Future<bool?> _confirmDismiss(
     BuildContext context,
     DismissDirection direction,
@@ -256,7 +277,6 @@ class _ExpenseSheetEditScreenState
   void _onNavigateToPdf() {
     final sheet = ref.read(expenseSheetProvider(widget.sheetId)).value;
 
-    // バリデーション
     if (sheet == null) return;
 
     if (sheet.title.trim().isEmpty) {
@@ -279,7 +299,6 @@ class _ExpenseSheetEditScreenState
       return;
     }
 
-    // ヘッダー情報を保存してから遷移
     _onSaveHeader();
 
     Navigator.pushNamed(
@@ -295,7 +314,6 @@ class _ExpenseSheetEditScreenState
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // Material Design 3 風のカラーパレット（HTMLに合わせた見た目）
     const primaryColor = Color(0xFF0061A4);
     const surfaceLight = Color(0xFFFDFCFF);
     const surfaceDark = Color(0xFF1A1C1E);
@@ -343,10 +361,10 @@ class _ExpenseSheetEditScreenState
       body: sheetAsync.when(
         data: (sheet) {
           if (sheet == null) {
-            return Center(
+            return const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   Icon(
                     Icons.error_outline,
                     size: 64,
@@ -419,7 +437,7 @@ class _ExpenseSheetEditScreenState
                 ),
               ),
 
-              // ヘッダー情報（タイトル・申請者名・作成日）
+              // ヘッダー情報
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Container(
@@ -437,6 +455,7 @@ class _ExpenseSheetEditScreenState
                   ),
                   child: Column(
                     children: [
+                      // タイトル
                       TextField(
                         controller: _titleController,
                         decoration: InputDecoration(
@@ -461,6 +480,8 @@ class _ExpenseSheetEditScreenState
                         onChanged: (_) => _onSaveHeader(),
                       ),
                       const SizedBox(height: 12),
+                      
+                      // 申請者名
                       TextField(
                         controller: _applicantController,
                         decoration: InputDecoration(
@@ -485,39 +506,45 @@ class _ExpenseSheetEditScreenState
                         onChanged: (_) => _onSaveHeader(),
                       ),
                       const SizedBox(height: 12),
-                      InkWell(
-                        onTap: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: _createdAt ?? DateTime.now(),
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100),
-                            locale: const Locale('ja', 'JP'),
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              _createdAt = picked;
-                            });
-                            _onSaveHeader();
-                          }
-                        },
-                        borderRadius: BorderRadius.circular(12),
-                        child: InputDecorator(
-                          decoration: InputDecoration(
-                            labelText: '作成日',
-                            prefixIcon: const Icon(Icons.calendar_today),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      
+                      // 🔧 修正: 作成日選択を簡潔に
+                      GestureDetector(
+                        onTap: _selectDate,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 16,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: theme.colorScheme.outline,
                             ),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                FormattingUtils.formatDate(
-                                  _createdAt ?? DateTime.now(),
+                              const Icon(Icons.calendar_today),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '作成日',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      FormattingUtils.formatDate(
+                                        _createdAt ?? DateTime.now(),
+                                      ),
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                                  ],
                                 ),
-                                style: const TextStyle(fontSize: 16),
                               ),
                               const Icon(Icons.arrow_drop_down),
                             ],
@@ -647,7 +674,7 @@ class _ExpenseSheetEditScreenState
                                       item.payee.isNotEmpty
                                           ? item.payee[0]
                                           : '?',
-                                      style: TextStyle(
+                                      style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                         color: primaryColor,
                                       ),
@@ -707,7 +734,7 @@ class _ExpenseSheetEditScreenState
                       ),
               ),
 
-              // フッター（追加ボタンのみ）
+              // フッター
               Container(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                 decoration: BoxDecoration(
