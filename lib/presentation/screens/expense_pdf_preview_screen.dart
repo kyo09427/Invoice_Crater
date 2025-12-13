@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
-import 'package:hive/hive.dart';
 
 import '../../application/providers/expense_sheet_provider.dart';
 import '../../data/models/expense_sheet.dart';
@@ -47,16 +46,8 @@ enum PdfSortType {
   }
 }
 
-/// ソート設定を永続化するためのプロバイダー
+/// ソート設定を保持するプロバイダー（修正版：Hiveを使わずStateProviderのみ）
 final pdfSortTypeProvider = StateProvider<PdfSortType>((ref) {
-  // Hiveから前回のソート設定を読み込む
-  final box = Hive.box('app_settings');
-  final savedSortIndex = box.get('pdf_sort_type', defaultValue: 0) as int;
-  
-  if (savedSortIndex >= 0 && savedSortIndex < PdfSortType.values.length) {
-    return PdfSortType.values[savedSortIndex];
-  }
-  
   return PdfSortType.dateAsc;
 });
 
@@ -168,10 +159,6 @@ class _ExpensePdfPreviewScreenState
     if (selected != null && selected != currentSortType) {
       // ソート設定を更新
       ref.read(pdfSortTypeProvider.notifier).state = selected;
-      
-      // Hiveに保存
-      final box = Hive.box('app_settings');
-      await box.put('pdf_sort_type', selected.index);
 
       // ソート変更のフィードバック
       if (mounted) {
@@ -219,7 +206,7 @@ class _ExpensePdfPreviewScreenState
                       SizedBox(height: 8),
                       Text('🔄 並び替えボタンで明細の順序を変更できます'),
                       SizedBox(height: 8),
-                      Text('💾 並び順は次回も保持されます'),
+                      Text('💡 並び順は画面を閉じるまで保持されます'),
                     ],
                   ),
                   actions: [
@@ -320,18 +307,6 @@ class _ExpensePdfPreviewScreenState
                       ),
                     ),
                     const Spacer(),
-                    Chip(
-                      label: const Text(
-                        '保存済み',
-                        style: TextStyle(fontSize: 11),
-                      ),
-                      avatar: const Icon(Icons.bookmark, size: 14),
-                      backgroundColor: Colors.green.withOpacity(0.2),
-                      side: BorderSide.none,
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    const SizedBox(width: 8),
                     TextButton.icon(
                       onPressed: _showSortDialog,
                       icon: const Icon(Icons.swap_vert, size: 16),

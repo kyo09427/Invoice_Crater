@@ -67,20 +67,32 @@ class _ExpenseItemEditBottomSheetState
     _isInitialized = true;
   }
 
-  // 🔧 修正: 支払日選択を独立したメソッドに
+  /// 支払日選択（修正版）
   Future<void> _selectDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _date,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-      // localeパラメータを削除（不要）
-    );
-    
-    if (picked != null && mounted) {
-      setState(() {
-        _date = picked;
-      });
+    try {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: _date,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(2100),
+        // localeパラメータを削除 - システムのロケールを自動使用
+      );
+      
+      if (picked != null && mounted) {
+        setState(() {
+          _date = picked;
+        });
+      }
+    } catch (e) {
+      // エラーハンドリング追加
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('日付選択エラー: $e'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     }
   }
 
@@ -161,7 +173,7 @@ class _ExpenseItemEditBottomSheetState
                   ),
                   const SizedBox(height: 16),
 
-                  // 🔧 修正: 支払日選択をGestureDetectorに変更
+                  // 支払日選択
                   GestureDetector(
                     onTap: _selectDate,
                     child: Container(
