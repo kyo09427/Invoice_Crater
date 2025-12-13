@@ -61,10 +61,27 @@ class _ExpenseItemEditBottomSheetState
     if (_paymentMethod.isEmpty && candidates.isNotEmpty) {
       _paymentMethod = candidates.first;
     } else if (_paymentMethod.isEmpty) {
-      _paymentMethod = '現金'; // フォールバック
+      _paymentMethod = '現金';
     }
     
     _isInitialized = true;
+  }
+
+  // 🔧 修正: 支払日選択を独立したメソッドに
+  Future<void> _selectDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      // localeパラメータを削除（不要）
+    );
+    
+    if (picked != null && mounted) {
+      setState(() {
+        _date = picked;
+      });
+    }
   }
 
   void _onSave() {
@@ -72,13 +89,11 @@ class _ExpenseItemEditBottomSheetState
       return;
     }
 
-    // 入力値の取得とトリム
     final payee = _payeeController.text.trim();
     final purpose = _purposeController.text.trim();
     final amountStr = _amountController.text.trim();
     final note = _noteController.text.trim();
 
-    // 最終バリデーション
     if (payee.isEmpty || purpose.isEmpty || amountStr.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('必須項目を入力してください')),
@@ -146,47 +161,52 @@ class _ExpenseItemEditBottomSheetState
                   ),
                   const SizedBox(height: 16),
 
-                  // 支払日
-                  Card(
-                    child: InkWell(
-                      onTap: () async {
-                        final picked = await showDatePicker(
-                          context: context,
-                          initialDate: _date,
-                          firstDate: DateTime(2000),
-                          lastDate: DateTime(2100),
-                          locale: const Locale('ja', 'JP'),
-                        );
-                        if (picked != null) {
-                          setState(() {
-                            _date = picked;
-                          });
-                        }
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.calendar_today),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '支払日',
-                                    style: Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                  Text(
-                                    FormattingUtils.formatDate(_date),
-                                    style: Theme.of(context).textTheme.titleMedium,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Icon(Icons.arrow_forward_ios, size: 16),
-                          ],
+                  // 🔧 修正: 支払日選択をGestureDetectorに変更
+                  GestureDetector(
+                    onTap: _selectDate,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outline,
+                          width: 1,
                         ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.calendar_today,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '支払日',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  FormattingUtils.formatDate(_date),
+                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.arrow_forward_ios,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ],
                       ),
                     ),
                   ),
