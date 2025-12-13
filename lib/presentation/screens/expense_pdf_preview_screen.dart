@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
+import 'package:hive/hive.dart';
 
 import '../../application/providers/expense_sheet_provider.dart';
 import '../../data/models/expense_sheet.dart';
@@ -46,6 +47,19 @@ enum PdfSortType {
   }
 }
 
+/// ソート設定を永続化するためのプロバイダー
+final pdfSortTypeProvider = StateProvider<PdfSortType>((ref) {
+  // Hiveから前回のソート設定を読み込む
+  final box = Hive.box('app_settings');
+  final savedSortIndex = box.get('pdf_sort_type', defaultValue: 0) as int;
+  
+  if (savedSortIndex >= 0 && savedSortIndex < PdfSortType.values.length) {
+    return PdfSortType.values[savedSortIndex];
+  }
+  
+  return PdfSortType.dateAsc;
+});
+
 class ExpensePdfPreviewScreen extends ConsumerStatefulWidget {
   static const routeName = '/pdf_preview';
   final String sheetId;
@@ -59,14 +73,12 @@ class ExpensePdfPreviewScreen extends ConsumerStatefulWidget {
 
 class _ExpensePdfPreviewScreenState
     extends ConsumerState<ExpensePdfPreviewScreen> {
-  /// 現在のソート種別
-  PdfSortType _currentSortType = PdfSortType.dateAsc;
-
+  
   /// 明細をソート
-  List<ExpenseItem> _sortItems(List<ExpenseItem> items) {
+  List<ExpenseItem> _sortItems(List<ExpenseItem> items, PdfSortType sortType) {
     final sortedItems = List<ExpenseItem>.from(items);
 
-    switch (_currentSortType) {
+    switch (sortType) {
       case PdfSortType.dateAsc:
         sortedItems.sort((a, b) => a.date.compareTo(b.date));
         break;
@@ -98,6 +110,8 @@ class _ExpensePdfPreviewScreenState
 
   /// ソート選択ダイアログ
   Future<void> _showSortDialog() async {
+    final currentSortType = ref.read(pdfSortTypeProvider);
+    
     final selected = await showDialog<PdfSortType>(
       context: context,
       builder: (BuildContext context) {
@@ -111,7 +125,7 @@ class _ExpensePdfPreviewScreenState
               separatorBuilder: (context, index) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 final sortType = PdfSortType.values[index];
-                final isSelected = sortType == _currentSortType;
+                final isSelected = sortType == currentSortType;
 
                 return ListTile(
                   leading: Icon(
@@ -151,10 +165,13 @@ class _ExpensePdfPreviewScreenState
       },
     );
 
-    if (selected != null && selected != _currentSortType) {
-      setState(() {
-        _currentSortType = selected;
-      });
+    if (selected != null && selected != currentSortType) {
+      // ソート設定を更新
+      ref.read(pdfSortTypeProvider.notifier).state = selected;
+      
+      // Hiveに保存
+      final box = Hive.box('app_settings');
+      await box.put('pdf_sort_type', selected.index);
 
       // ソート変更のフィードバック
       if (mounted) {
@@ -171,6 +188,7 @@ class _ExpensePdfPreviewScreenState
   @override
   Widget build(BuildContext context) {
     final sheetAsync = ref.watch(expenseSheetProvider(widget.sheetId));
+    final currentSortType = ref.watch(pdfSortTypeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -200,6 +218,8 @@ class _ExpensePdfPreviewScreenState
                       Text('🖨️ プリンターアイコンから印刷できます'),
                       SizedBox(height: 8),
                       Text('🔄 並び替えボタンで明細の順序を変更できます'),
+                      SizedBox(height: 8),
+                      Text('💾 並び順は次回も保持されます'),
                     ],
                   ),
                   actions: [
@@ -253,7 +273,7 @@ class _ExpensePdfPreviewScreenState
 
           // ソートされた明細で新しい精算書を作成
           final sortedSheet = sheet.copyWith(
-            items: _sortItems(sheet.items),
+            items: _sortItems(sheet.items, currentSortType),
           );
 
           return Column(
@@ -276,13 +296,13 @@ class _ExpensePdfPreviewScreenState
                 child: Row(
                   children: [
                     Icon(
-                      _currentSortType.icon,
+                      currentSortType.icon,
                       size: 20,
                       color: Theme.of(context).colorScheme.onPrimaryContainer,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '並び順: ${_currentSortType.label}',
+                      '並び順: ${currentSortType.label}',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
@@ -300,6 +320,18 @@ class _ExpensePdfPreviewScreenState
                       ),
                     ),
                     const Spacer(),
+                    Chip(
+                      label: const Text(
+                        '保存済み',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      avatar: const Icon(Icons.bookmark, size: 14),
+                      backgroundColor: Colors.green.withOpacity(0.2),
+                      side: BorderSide.none,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 8),
                     TextButton.icon(
                       onPressed: _showSortDialog,
                       icon: const Icon(Icons.swap_vert, size: 16),
@@ -338,7 +370,7 @@ class _ExpensePdfPreviewScreenState
                   canChangeOrientation: false,
                   canChangePageFormat: false,
                   initialPageFormat: PdfPageFormat.a4,
-                  pdfFileName: '${sheet.title}_${_currentSortType.shortLabel}.pdf',
+                  pdfFileName: '${sheet.title}_${currentSortType.shortLabel}.pdf',
                   allowPrinting: true,
                   allowSharing: true,
                   maxPageWidth: 700,

@@ -11,38 +11,72 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  // 🔧 修正: TextEditingControllerをStateとして管理
   late TextEditingController _defaultApplicantController;
+  late FocusNode _applicantFocusNode;
   bool _isInitialized = false;
+  bool _hasUnsavedChanges = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _applicantFocusNode = FocusNode();
+    _applicantFocusNode.addListener(_onFocusChange);
+  }
 
   @override
   void dispose() {
+    _applicantFocusNode.removeListener(_onFocusChange);
+    _applicantFocusNode.dispose();
     _defaultApplicantController.dispose();
     super.dispose();
   }
 
-  // 🔧 修正: 初回のみコントローラーを初期化
   void _initializeController(String defaultName) {
     if (_isInitialized) return;
     _defaultApplicantController = TextEditingController(text: defaultName);
+    _defaultApplicantController.addListener(_onTextChanged);
     _isInitialized = true;
   }
 
-  // 🔧 修正: デフォルト申請者名を保存
+  void _onTextChanged() {
+    final settings = ref.read(appSettingsProvider).value;
+    if (settings == null) return;
+    
+    final newValue = _defaultApplicantController.text.trim();
+    final hasChanges = newValue != settings.defaultApplicantName;
+    
+    if (hasChanges != _hasUnsavedChanges) {
+      setState(() {
+        _hasUnsavedChanges = hasChanges;
+      });
+    }
+  }
+
+  void _onFocusChange() {
+    // フォーカスを失った時に自動保存
+    if (!_applicantFocusNode.hasFocus && _hasUnsavedChanges) {
+      _saveDefaultApplicantName();
+    }
+  }
+
   Future<void> _saveDefaultApplicantName() async {
     final settings = ref.read(appSettingsProvider).value;
     if (settings == null) return;
 
     final newName = _defaultApplicantController.text.trim();
     
-    // 変更がない場合は保存しない
-    if (newName == settings.defaultApplicantName) return;
+    if (newName == settings.defaultApplicantName) {
+      setState(() => _hasUnsavedChanges = false);
+      return;
+    }
 
     try {
       final newSettings = settings.copyWith(
         defaultApplicantName: newName,
       );
       await ref.read(appSettingsProvider.notifier).updateSettings(newSettings);
+      
+      setState(() => _hasUnsavedChanges = false);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -96,7 +130,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            Navigator.maybePop(context);
+            // 未保存の変更がある場合は保存してから戻る
+            if (_hasUnsavedChanges) {
+              _saveDefaultApplicantName().then((_) {
+                if (mounted) Navigator.maybePop(context);
+              });
+            } else {
+              Navigator.maybePop(context);
+            }
           },
         ),
         titleSpacing: 0,
@@ -110,7 +151,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
       body: settingsAsync.when(
         data: (settings) {
-          // 🔧 修正: 設定読み込み後にコントローラーを初期化
           _initializeController(settings.defaultApplicantName);
 
           final outlineColor = isDark ? outlineDark : outlineLight;
@@ -147,45 +187,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     TextField(
                       controller: _defaultApplicantController,
+                      focusNode: _applicantFocusNode,
                       decoration: InputDecoration(
                         labelText: 'デフォルト申請者名',
                         hintText: '例: 山田 太郎',
                         border: InputBorder.none,
-                        // 🔧 追加: クリアボタン
-                        suffixIcon: _defaultApplicantController.text.isNotEmpty
-                            ? IconButton(
+                        suffixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_hasUnsavedChanges)
+                              Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  '未保存',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            if (_defaultApplicantController.text.isNotEmpty)
+                              IconButton(
                                 icon: const Icon(Icons.clear, size: 20),
                                 onPressed: () {
                                   _defaultApplicantController.clear();
                                   _saveDefaultApplicantName();
                                 },
                                 tooltip: 'クリア',
-                              )
-                            : null,
+                              ),
+                          ],
+                        ),
                       ),
                       maxLength: 50,
                       textInputAction: TextInputAction.done,
-                      // 🔧 修正: Enterキーで保存
                       onSubmitted: (_) => _saveDefaultApplicantName(),
-                      // 🔧 追加: 変更時にSetStateでクリアボタンを更新
-                      onChanged: (_) {
-                        setState(() {});
-                      },
                     ),
-                    // 🔧 追加: 保存ボタン
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          TextButton.icon(
-                            onPressed: _saveDefaultApplicantName,
-                            icon: const Icon(Icons.check, size: 18),
-                            label: const Text('保存'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: primaryColor,
+                          if (_hasUnsavedChanges)
+                            TextButton.icon(
+                              onPressed: _saveDefaultApplicantName,
+                              icon: const Icon(Icons.check, size: 18),
+                              label: const Text('保存'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: primaryColor,
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),
@@ -195,7 +254,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Padding(
                 padding: const EdgeInsets.only(top: 6, left: 8, right: 8),
                 child: Text(
-                  '新規作成時に、この名前が自動的に入力されます。Enterキーまたは「保存」ボタンで保存してください。',
+                  '新規作成時に、この名前が自動的に入力されます。フォーカスを外すか、Enterキーまたは「保存」ボタンで保存されます。',
                   style: theme.textTheme.bodySmall?.copyWith(
                     fontSize: 11,
                     color: textSecondaryColor,
@@ -269,7 +328,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                 color: textSecondaryColor,
                                 tooltip: '削除',
                                 onPressed: () async {
-                                  // 確認ダイアログ
                                   final confirmed = await showDialog<bool>(
                                     context: context,
                                     builder: (context) => AlertDialog(
@@ -367,7 +425,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         if (confirmed == true && controller.text.trim().isNotEmpty) {
                           final newMethod = controller.text.trim();
                           
-                          // 重複チェック
                           if (settings.paymentMethodCandidates.contains(newMethod)) {
                             if (context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -475,7 +532,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '締め切り3日前に通知します（予定）',
+                            '締め切り3日前に通知します（v1.3で実装予定）',
                             style: theme.textTheme.bodySmall?.copyWith(
                               fontSize: 11,
                               color: textSecondaryColor,
@@ -528,7 +585,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'バージョン 1.1.0',
+                      'バージョン 1.2.0',
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontSize: 11,
                         color: textSecondaryColor,
