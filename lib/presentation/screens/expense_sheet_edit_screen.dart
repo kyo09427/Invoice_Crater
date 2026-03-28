@@ -126,6 +126,37 @@ class _ExpenseSheetEditScreenState
     }
   }
 
+  Future<void> _onEditItem(ExpenseItem item) async {
+    final updatedItem = await showModalBottomSheet<ExpenseItem>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => ExpenseItemEditBottomSheet(item: item),
+    );
+
+    if (updatedItem != null) {
+      final sheet = ref.read(expenseSheetProvider(widget.sheetId)).value;
+      if (sheet != null) {
+        final newItems = sheet.items
+            .map((e) => e.id == updatedItem.id ? updatedItem : e)
+            .toList();
+        final newSheet = sheet.copyWith(items: newItems);
+        await _updateSheet(newSheet);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('明細を更新しました'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   Future<bool?> _confirmDismiss(
     BuildContext context,
     DismissDirection direction,
@@ -647,7 +678,10 @@ class _ExpenseSheetEditScreenState
                                 ],
                               ),
                             ),
-                            child: Container(
+                            child: InkWell(
+                              onLongPress: () => _onEditItem(item),
+                              borderRadius: BorderRadius.circular(16),
+                              child: Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
                                 color: surfaceColor,
@@ -728,6 +762,7 @@ class _ExpenseSheetEditScreenState
                                   ),
                                 ],
                               ),
+                            ),
                             ),
                           );
                         },
